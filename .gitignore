@@ -1,0 +1,24 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*.so
+
+# macOS system files
+.DS_Store
+
+# Environment
+.env
+venv/
+
+# Flask instance folder (e.g. config with secrets)
+instance/
+
+# Docker
+*.log
+*.pid
+
+# Pytest cache
+.pytest_cache/
+
+# Migrations (falls du sie separat verwaltest)
+migrations/
