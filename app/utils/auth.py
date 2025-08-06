@@ -5,7 +5,7 @@ from flask import request, jsonify
 from functools import wraps
 
 CLERK_ISSUER = "https://popular-civet-81.clerk.accounts.dev"
-CLERK_JWKS_URL = f"{CLERK_ISSUER}.well-known/jwks.json"
+CLERK_JWKS_URL = f"{CLERK_ISSUER}/.well-known/jwks.json"
 
 jwk_client = PyJWKClient(CLERK_JWKS_URL)
 

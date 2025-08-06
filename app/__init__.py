@@ -7,7 +7,7 @@ from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from config import Config
 
-from app.extensions import db
+from app.extensions import db, migrate
 from app import models
 
 # .env laden
@@ -29,6 +29,7 @@ def create_app():
     # Erweiterungen initialisieren
     jwt.init_app(app)
     db.init_app(app)
+    migrate.init_app(app, db)
     oauth.init_app(app)
     CORS(app)                           # Für Frontend-Zugriff (z. B. von Next.js / Postman)
 
