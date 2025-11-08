@@ -1,40 +1,29 @@
 import os
 from flask import Flask
-from flask_sqlalchemy import SQLAlchemy
-from flask_cors import CORS
-from flask_jwt_extended import JWTManager
-from authlib.integrations.flask_client import OAuth
 from dotenv import load_dotenv
 from config import Config
 
-from app.extensions import db, migrate
-from app import models
+from flask_migrate import Migrate
+
+from app.extensions import db, migrate, jwt, oauth
+from flask_cors import CORS
 
 # .env laden
 load_dotenv()
 
-# Globale Extension (wird in create_app eingebunden)
-jwt = JWTManager()
-oauth = OAuth()
-
-
-
-def create_app():
+def create_app(config_class=Config) -> Flask:
     # App erstellen
     app = Flask(__name__)
 
     # Konfiguration laden
-    app.config.from_object(Config)
+    app.config.from_object(config_class)
     
     # Erweiterungen initialisieren
+    CORS(app)                           # CORS aktiviieren für Frontend-Zugriff (z.B. von Next.js / Postman und Mobile App)
+    db.init_app(app)                    # SQLAlchemy binden/initialisieren
+    migrate.init_app(app, db)            # Migrate binden/initialisieren
     jwt.init_app(app)
-    db.init_app(app)
-    migrate.init_app(app, db)
     oauth.init_app(app)
-    CORS(app)                           # Für Frontend-Zugriff (z. B. von Next.js / Postman)
-
-    with app.app_context():
-        db.create_all()                 # Erzeugt die Tabellen in der Datenbank falls sie noch fehlen
 
     # OAuth Provider: Google
     oauth.register(
@@ -44,6 +33,11 @@ def create_app():
         server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
         client_kwargs={'scope': 'openid email profile'}
     )
+
+    # Modelle laden, damit Alembic alle Tabelle sieht und die Migrationen erstellt
+    # Wichtig: Diese Import muss im App-Kontext erfolgen, sonst funktioniert die Migration nicht.
+    with app.app_context():
+        from app import models
 
     # ------ Mounting Blueprints --------- #
 
