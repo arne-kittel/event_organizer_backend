@@ -95,7 +95,7 @@ def get_registered_events():
     return jsonify([_serialize_event(e, include_media, include_participants) for e in registered_events])
 
 @events_bp.route("/all", methods=["GET"])
-@clerk_auth_required
+#@clerk_auth_required
 def get_all_events():
     """Gibt alle Events zurück (Admin-Funktion)"""
     include_media = request.args.get("include_media", "false").lower() == "true"
