@@ -9,6 +9,14 @@ from app.services.blob import make_read_sas, make_write_sas
 import uuid
 import mimetypes
 
+# ⭐ Stripe-Integration
+import os
+import stripe
+
+stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
+if not stripe.api_key:
+    print("⚠️ STRIPE_SECRET_KEY ist nicht gesetzt – Stripe Payments werden fehlschlagen.")
+
 events_bp = Blueprint("events", __name__)
 
 # ---------------------- HELPER FUNCTIONS ----------------------
@@ -95,7 +103,7 @@ def get_registered_events():
     return jsonify([_serialize_event(e, include_media, include_participants) for e in registered_events])
 
 @events_bp.route("/all", methods=["GET"])
-#@clerk_auth_required
+# @clerk_auth_required
 def get_all_events():
     """Gibt alle Events zurück (Admin-Funktion)"""
     include_media = request.args.get("include_media", "false").lower() == "true"
@@ -301,6 +309,66 @@ def get_event_participants(event_id: int):
             "registered_at": p.timestamp.isoformat()
         } for p in participants]
     })
+
+# ---------------------- PAYMENTS / STRIPE ----------------------
+
+@events_bp.route("/create-payment-intent", methods=["POST"])
+@clerk_auth_required
+def create_event_payment_intent():
+    """
+    Erstellt einen Stripe PaymentIntent für ein Event.
+
+    Erwartet JSON:
+    {
+      "event_id": 123
+      // optional: "amount": 5000  (in Rappen)
+    }
+
+    Aktuell: Fix 50 CHF (5000 Rappen), falls kein amount übergeben wird.
+    """
+    if not stripe.api_key:
+        return jsonify({"error": "Stripe is not configured on the server"}), 500
+
+    data = request.get_json(force=True) or {}
+    event_id = data.get("event_id")
+    user_id = request.clerk_user_id
+
+    if not event_id:
+        return jsonify({"error": "Missing event_id"}), 400
+
+    # Sicherstellen, dass das Event existiert
+    event = db.session.get(Event, event_id)
+    if not event:
+        return jsonify({"error": "Event not found"}), 404
+
+    # Betrag bestimmen – hier fix 50 CHF
+    # Stripe erwartet die kleinste Währungseinheit → 50 CHF = 5000 Rappen
+    amount = data.get("amount") or 5000
+
+    try:
+        payment_intent = stripe.PaymentIntent.create(
+            amount=amount,
+            currency="chf",
+            automatic_payment_methods={"enabled": True},
+            metadata={
+                "event_id": str(event_id),
+                "user_id": str(user_id),
+            },
+        )
+
+        return jsonify({
+            "clientSecret": payment_intent.client_secret,
+            "amount": amount,
+            "currency": "chf"
+        }), 200
+
+    except stripe.error.StripeError as e:
+        return jsonify({
+            "error": str(e),
+            "type": e.error.type if hasattr(e, "error") else "stripe_error"
+        }), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 # ---------------------- MEDIA MANAGEMENT ----------------------
 
