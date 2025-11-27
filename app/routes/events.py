@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, abort
 from app.models.event import Event
 from app.models.event_media import EventMedia, MediaType
 from app.models.user_event import UserEvent
+#from app.models.user import User
 from app import db
 from datetime import datetime
 from app.utils.auth import clerk_auth_required
@@ -12,6 +13,7 @@ import mimetypes
 # ⭐ Stripe-Integration
 import os
 import stripe
+import requests
 
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 if not stripe.api_key:
@@ -20,6 +22,49 @@ if not stripe.api_key:
 events_bp = Blueprint("events", __name__)
 
 # ---------------------- HELPER FUNCTIONS ----------------------
+def fetch_clerk_user_image(clerk_user_id: str) -> str | None:
+    """
+    Holt das Profilbild eines Clerk-Users über die Clerk Backend API.
+    Wir verwenden direkt die Clerk-User-ID (z.B. 'user_363zYC2Ve5HZwsS7cwJY8AS9txk'),
+    die in UserEvent.user_id gespeichert ist.
+    Es wird NICHTS in der DB gespeichert – reiner Runtime-Lookup.
+    """
+    secret = os.getenv("CLERK_SECRET_KEY")
+    if not secret:
+        print("⚠️ CLERK_SECRET_KEY ist nicht gesetzt – kann Clerk-User nicht laden.")
+        return None
+
+    if not clerk_user_id:
+        print("⚠️ fetch_clerk_user_image: clerk_user_id ist leer.")
+        return None
+
+    try:
+        url = f"https://api.clerk.com/v1/users/{clerk_user_id}"
+        print(f"🔎 Hole Clerk-User von {url}")
+        resp = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {secret}",
+            },
+            timeout=5,
+        )
+        print(f"🔎 Clerk-Response {resp.status_code} für user_id={clerk_user_id}")
+
+        if resp.status_code != 200:
+            # ersten Teil der Antwort loggen, um Fehlermeldung zu sehen
+            text_preview = resp.text[:300].replace("\n", " ")
+            print(f"⚠️ Clerk API Fehler {resp.status_code}: {text_preview}")
+            return None
+
+        data = resp.json()
+        image_url = data.get("image_url")
+        print(f"✅ Clerk image_url für {clerk_user_id}: {image_url}")
+        return image_url
+    except Exception as e:
+        print(f"⚠️ Fehler beim Laden des Clerk-Users {clerk_user_id}: {e}")
+        return None
+
+
 
 def _serialize_media(media: EventMedia) -> dict:
     """Serialisiert ein Media-Objekt mit SAS-URLs"""
@@ -50,29 +95,52 @@ def _serialize_event(event: Event, include_media: bool = False, include_particip
         "end_time": event.end_time.isoformat() if event.end_time else None,
         "max_participants": event.max_participants,
     }
-    
-    # Optionale Felder nur hinzufügen, wenn sie existieren
+
     if hasattr(event, "creator_id"):
         result["creator_id"] = event.creator_id
     if hasattr(event, "host_id"):
         result["host_id"] = event.host_id
     if hasattr(event, "is_online"):
         result["is_online"] = event.is_online
-    
-    # Teilnehmer-Info berechnen
+
     if include_participants:
-        participant_count = db.session.query(UserEvent).filter_by(event_id=event.id).count()
+        user_events = (
+            UserEvent.query
+            .filter_by(event_id=event.id)
+            .order_by(UserEvent.timestamp.asc())
+            .all()
+        )
+
+        participant_count = len(user_events)
         result["participant_count"] = participant_count
+
         if event.max_participants:
             result["available_spots"] = max(0, event.max_participants - participant_count)
         else:
             result["available_spots"] = None  # unlimited
-    
-    # Media-Items hinzufügen, wenn gewünscht
+
+        # Teilnehmer-Liste (Clerk-User-ID + Zeitpunkt)
+        result["participants"] = [
+            {
+                "user_id": ue.user_id,
+                "registered_at": ue.timestamp.isoformat(),
+            }
+            for ue in user_events
+        ]
+
+        # 👉 hier kommen die Avatare aus user_event.avatar_url
+        result["participants_media"] = [
+            {"url": ue.avatar_url}
+            for ue in user_events
+            if ue.avatar_url
+        ]
+
     if include_media:
         result["media"] = [_serialize_media(m) for m in event.media_items]
-    
+
     return result
+
+
 
 # ---------------------- EVENT LISTINGS ----------------------
 
@@ -224,44 +292,42 @@ def delete_event(event_id: int):
 
 @events_bp.route("/participate", methods=["POST"])
 @clerk_auth_required
-def participate_in_event():
-    """Registriert einen User für ein Event"""
-    data = request.get_json(force=True) or {}
+def participate_event():
+    """User nimmt an einem Event teil"""
+    data = request.get_json() or {}
     event_id = data.get("event_id")
-    user_id = request.clerk_user_id
-    
+    avatar_url = data.get("avatar_url")  # 👈 vom Frontend mitgegeben
+    user_id = request.clerk_user_id      # kommt vom clerk_auth_required
+
     if not event_id:
-        return jsonify({"error": "Missing event_id"}), 400
-    
-    # Prüfen, ob Event existiert
-    event = db.session.get(Event, event_id)
+        return jsonify({"error": "event_id is required"}), 400
+
+    # Event prüfen
+    event = Event.query.get(event_id)
     if not event:
         return jsonify({"error": "Event not found"}), 404
-    
-    # Prüfen, ob bereits registriert
+
+    # Prüfen, ob User schon registriert ist
     existing = UserEvent.query.filter_by(user_id=user_id, event_id=event_id).first()
     if existing:
-        return jsonify({"message": "User already registered"}), 200
-    
-    # Prüfen, ob noch Plätze frei sind
-    if event.max_participants:
-        participant_count = db.session.query(UserEvent).filter_by(event_id=event_id).count()
-        if participant_count >= event.max_participants:
-            return jsonify({"error": "Event is full"}), 400
-    
+        return jsonify({"error": "Already registered"}), 400
+
+    # Optional: max_participants/available_spots prüfen
+
+    user_event = UserEvent(
+        user_id=user_id,
+        event_id=event_id,
+        avatar_url=avatar_url,  # 👈 hier speichern wir die URL
+    )
+
     try:
-        participation = UserEvent(user_id=user_id, event_id=event_id)
-        db.session.add(participation)
+        db.session.add(user_event)
         db.session.commit()
-        
-        return jsonify({
-            "message": "Successfully registered for the event.",
-            "event_id": event_id,
-            "user_id": user_id
-        }), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({"status": "ok"}), 200
 
 @events_bp.route("/withdraw", methods=["DELETE"])
 @clerk_auth_required

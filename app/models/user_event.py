@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, Index
+from sqlalchemy import ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.extensions import db
@@ -25,6 +25,8 @@ class UserEvent(db.Model):
         index=True
     )
     timestamp:  Mapped[datetime] = mapped_column(default=datetime.utcnow, nullable=False)
+
+    avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     # Optionale Rückbeziehung zum Event (falls du sie brauchst)
     # event: Mapped["Event"] = relationship("Event", back_populates="participants")
