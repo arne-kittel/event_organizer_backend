@@ -28,6 +28,11 @@ class UserEvent(db.Model):
 
     avatar_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+     # 🧾 Stripe-Daten
+    stripe_payment_intent_id = db.Column(db.String, nullable=True)
+    amount_paid = db.Column(db.Integer, nullable=True)  # in Rappen (z.B. 5000 = 50.00 CHF)
+    currency = db.Column(db.String(3), default="chf")
+
     # Optionale Rückbeziehung zum Event (falls du sie brauchst)
     # event: Mapped["Event"] = relationship("Event", back_populates="participants")
 

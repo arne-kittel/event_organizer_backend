@@ -23,7 +23,6 @@ def verify_clerk_token(token):
 def clerk_auth_required(func):
     @wraps(func)
     def decorated_function(*args, **kwargs):
-        print("clerk_auth_required wurde aufgerufen")
         auth_header = request.headers.get("Authorization", "")
         print("➡️ Authorization Header:", auth_header)
 
